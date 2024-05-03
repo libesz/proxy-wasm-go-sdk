@@ -15,6 +15,8 @@
 package main
 
 import (
+	"encoding/json"
+
 	"github.com/tetratelabs/proxy-wasm-go-sdk/proxywasm"
 	"github.com/tetratelabs/proxy-wasm-go-sdk/proxywasm/types"
 )
@@ -39,11 +41,39 @@ type pluginContext struct {
 	// so that we don't need to reimplement all the methods.
 	types.DefaultPluginContext
 	counter proxywasm.MetricCounter
+	config  PluginConfig
+}
+
+type PluginConfig struct {
+	Key string `json:"key"`
+}
+
+// Override types.DefaultPluginContext.
+func (ctx pluginContext) OnPluginStart(pluginConfigurationSize int) types.OnPluginStartStatus {
+	data, err := proxywasm.GetPluginConfiguration()
+	if err != nil {
+		proxywasm.LogCriticalf("error reading plugin configuration: %v", err)
+		return types.OnPluginStartStatusFailed
+	}
+	proxywasm.LogInfof("OnPluginStart raw plugin config: %s", string(data))
+
+	config := PluginConfig{}
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		proxywasm.LogCriticalf("error decoding plugin configuration: %v", err)
+		return types.OnPluginStartStatusFailed
+	}
+	proxywasm.LogInfof("OnPluginStart decoded plugin config: %+v", config)
+
+	ctx.config = config
+
+	return types.OnPluginStartStatusOK
 }
 
 // Override types.DefaultPluginContext.
 func (ctx *pluginContext) NewTcpContext(contextID uint32) types.TcpContext {
-	return &networkContext{counter: ctx.counter}
+	proxywasm.LogInfof("NewTcpContext decoded plugin config: %+v", ctx.config)
+	return &networkContext{counter: ctx.counter, config: ctx.config}
 }
 
 type networkContext struct {
@@ -51,16 +81,19 @@ type networkContext struct {
 	// so that we don't need to reimplement all the methods.
 	types.DefaultTcpContext
 	counter proxywasm.MetricCounter
+	config  PluginConfig
 }
 
 // Override types.DefaultTcpContext.
 func (ctx *networkContext) OnNewConnection() types.Action {
+	proxywasm.LogInfof("OnNewConnection decoded plugin config: %+v", ctx.config)
 	proxywasm.LogInfo("new connection!")
 	return types.ActionContinue
 }
 
 // Override types.DefaultTcpContext.
 func (ctx *networkContext) OnDownstreamData(dataSize int, endOfStream bool) types.Action {
+	proxywasm.LogInfof("OnDownstreamData decoded plugin config: %+v", ctx.config)
 	if dataSize == 0 {
 		return types.ActionContinue
 	}
